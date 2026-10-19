@@ -20,60 +20,41 @@ void main()
             [Type.ptr(), Type.i32(), Type.i32()]);
     mod.newFunc("fib", Type.i32(), [Param(Type.i32(), "n")]);
 
-    auto func = &mod.funcs[0];
-    auto entry = 0u;
-    auto loop = cast(uint) func.blocks.length;
-    func.newBlock("loop");
-    auto body = cast(uint) func.blocks.length;
-    func.newBlock("body");
-    auto done = cast(uint) func.blocks.length;
-    func.newBlock("done");
+    auto builder = IRBuilder(mod.funcs[0]);
+    auto entry = builder.currentBlock;
+    auto loop = builder.newBlock("loop");
+    auto body = builder.newBlock("body");
+    auto done = builder.newBlock("done");
+    auto index = builder.newValue(Type.i32());
+    auto previous = builder.newValue(Type.i32());
+    auto current = builder.newValue(Type.i32());
+    auto nextCurrent = builder.newValue(Type.i32());
+    auto nextIndex = builder.newValue(Type.i32());
 
-    auto zero = func.newValue(Type.i32());
-    auto one = func.newValue(Type.i32());
-    auto index = func.newValue(Type.i32());
-    auto previous = func.newValue(Type.i32());
-    auto current = func.newValue(Type.i32());
-    auto condition = func.newValue(Type.bool_());
-    auto nextCurrent = func.newValue(Type.i32());
-    auto nextIndex = func.newValue(Type.i32());
+    auto zero = builder.intConstant(Type.i32(), 0);
+    auto one = builder.intConstant(Type.i32(), 1);
+    builder.branch(loop);
 
-    func.blocks[entry].instrs ~= Instr(op: Op.const_, dst: zero,
-            type: Type.i32(), imm: Const.int_(0));
-    func.blocks[entry].instrs ~= Instr(op: Op.const_, dst: one,
-            type: Type.i32(), imm: Const.int_(1));
-    func.blocks[entry].instrs ~= Instr(op: Op.br, target: loop);
+    builder.positionAt(loop);
+    builder.phi(index,
+            [PhiEdge(zero, entry), PhiEdge(nextIndex, body)]);
+    builder.phi(previous,
+            [PhiEdge(zero, entry), PhiEdge(current, body)]);
+    builder.phi(current,
+            [PhiEdge(one, entry), PhiEdge(nextCurrent, body)]);
+    auto condition = builder.compare(Pred.ult, index, builder.param(0));
+    builder.condBranch(condition, body, done);
 
-    func.blocks[loop].instrs ~= Instr(op: Op.phi, dst: index,
-            type: Type.i32(), phiEdges: [
-                PhiEdge(zero, entry), PhiEdge(nextIndex, body)
-            ]);
-    func.blocks[loop].instrs ~= Instr(op: Op.phi, dst: previous,
-            type: Type.i32(), phiEdges: [
-                PhiEdge(zero, entry), PhiEdge(current, body)
-            ]);
-    func.blocks[loop].instrs ~= Instr(op: Op.phi, dst: current,
-            type: Type.i32(), phiEdges: [
-                PhiEdge(one, entry), PhiEdge(nextCurrent, body)
-            ]);
-    func.blocks[loop].instrs ~= Instr(op: Op.icmp, dst: condition,
-            type: Type.bool_(), pred: Pred.ult,
-            uses: [index, func.params[0].value]);
-    func.blocks[loop].instrs ~= Instr(op: Op.condbr, uses: [condition],
-            target: body, altTarget: done);
+    builder.positionAt(body);
+    builder.binaryInto(nextCurrent, Op.add, previous, current);
+    builder.binaryInto(nextIndex, Op.add, index, one);
+    builder.branch(loop);
 
-    func.blocks[body].instrs ~= Instr(op: Op.add, dst: nextCurrent,
-            type: Type.i32(), uses: [previous, current]);
-    func.blocks[body].instrs ~= Instr(op: Op.add, dst: nextIndex,
-            type: Type.i32(), uses: [index, one]);
-    func.blocks[body].instrs ~= Instr(op: Op.br, target: loop);
-    auto formatAddress = func.newValue(Type.ptr());
-    func.blocks[done].instrs ~= Instr(op: Op.const_, dst: formatAddress,
-            type: Type.ptr(), symbol: "fib_format");
-    func.blocks[done].instrs ~= Instr(op: Op.call, type: Type.i32(),
-            symbol: "_printf",
-            uses: [formatAddress, func.params[0].value, previous]);
-    func.blocks[done].instrs ~= Instr(op: Op.ret, uses: [previous]);
+    builder.positionAt(done);
+    auto formatAddress = builder.symbol("fib_format");
+    builder.call("_printf", Type.i32(),
+            [formatAddress, builder.param(0), previous]);
+    builder.ret(previous);
 
     auto object = appender!(ubyte[])();
     auto emitter = new CoffEmitter();

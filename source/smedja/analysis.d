@@ -1,6 +1,7 @@
 module smedja.analysis;
 
 import smedja.ir;
+import smedja.errors : InvalidIRException;
 import std.algorithm.searching : canFind;
 
 struct ControlFlowGraph
@@ -29,7 +30,8 @@ ControlFlowGraph analyzeCFG(ref Func func)
     foreach (index, block; func.blocks)
     {
         if (block.id != index)
-            throw new Exception("basic block ids must match their function indices");
+            throw new InvalidIRException(
+                    "basic block ids must match their function indices");
         if (!block.instrs.length)
             continue;
 
@@ -41,7 +43,8 @@ ControlFlowGraph analyzeCFG(ref Func func)
             break;
         case Op.condbr:
             if (!terminator.uses.length)
-                throw new Exception("conditional branch requires a condition value");
+                throw new InvalidIRException(
+                        "conditional branch requires a condition value");
             addEdge(cfg, cast(uint) index, terminator.target);
             addEdge(cfg, cast(uint) index, terminator.altTarget);
             break;
@@ -127,7 +130,7 @@ ControlFlowGraph analyzeCFG(ref Func func)
 private void addEdge(ref ControlFlowGraph cfg, uint from, uint to)
 {
     if (to >= cfg.successors.length)
-        throw new Exception("branch target is outside the function");
+        throw new InvalidIRException("branch target is outside the function");
     if (!cfg.successors[from].canFind(to))
     {
         cfg.successors[from] ~= to;
@@ -157,4 +160,14 @@ unittest
     assert(cfg.dominates(0, 3));
     assert(!cfg.dominates(1, 3));
     assert(cfg.dominates(4, 4));
+}
+
+unittest
+{
+    import std.exception : assertThrown;
+
+    auto func = Func();
+    func.newBlock("entry");
+    func.blocks[0].instrs ~= Instr(op: Op.br, target: 1);
+    assertThrown!InvalidIRException(analyzeCFG(func));
 }

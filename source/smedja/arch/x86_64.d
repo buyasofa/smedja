@@ -2,6 +2,8 @@ module smedja.arch.x86_64;
 
 import smedja.ir;
 import smedja.arch;
+import smedja.errors : CodeGenerationException, InvalidIRException,
+    UnsupportedOperationException;
 
 enum : RegId
 {
@@ -72,7 +74,8 @@ private struct X64Codegen
         if ((type.kind != TypeKind.i32 && type.kind != TypeKind.i64 &&
              type.kind != TypeKind.bool_) &&
             type.kind != TypeKind.ptr && type.kind != TypeKind.func)
-            throw new Exception("x86-64 Windows backend supports i32, i64, bool, and pointers");
+            throw new UnsupportedOperationException(
+                    "x86-64 Windows backend supports i32, i64, bool, and pointers");
     }
 
     private bool wide(Type type)
@@ -95,14 +98,14 @@ private struct X64Codegen
     private int offset(Value value)
     {
         if (value.isNone || value.id >= valueOffsets.length)
-            throw new Exception("invalid value used by x86-64 code generation");
+            throw new InvalidIRException("invalid value used by x86-64 code generation");
         return valueOffsets[value.id];
     }
 
     private Type typeOf(Value value)
     {
         if (value.isNone || value.id >= func.values.length)
-            throw new Exception("invalid value used by x86-64 code generation");
+            throw new InvalidIRException("invalid value used by x86-64 code generation");
         return func.values[value.id].type;
     }
 
@@ -174,7 +177,7 @@ private struct X64Codegen
         foreach (branch; branches)
         {
             if (branch.target >= blockOffsets.length)
-                throw new Exception("branch target is outside the function");
+                throw new InvalidIRException("branch target is outside the function");
             auto relative = cast(int) blockOffsets[branch.target] -
                 cast(int)(branch.displacement + 4);
             auto bits = cast(uint) relative;
@@ -187,11 +190,11 @@ private struct X64Codegen
     private void emitConstant(Instr instruction)
     {
         if (instruction.dst.isNone)
-            throw new Exception("x86-64 constant requires a result");
+            throw new InvalidIRException("x86-64 constant requires a result");
         if (instruction.symbol.length)
         {
             if (!wide(typeOf(instruction.dst)))
-                throw new Exception("symbol constant requires a pointer result");
+                throw new InvalidIRException("symbol constant requires a pointer result");
             emit(0x48); emit(0x8D); emit(0x05);
             auto relocationOffset = cast(uint) machineFunc.code.length;
             emit32(0);
@@ -201,7 +204,8 @@ private struct X64Codegen
         else
         {
             if (instruction.imm.kind != Const.Kind.i)
-                throw new Exception("x86-64 backend only supports integer constants");
+                throw new UnsupportedOperationException(
+                        "x86-64 backend only supports integer constants");
             if (wide(typeOf(instruction.dst)))
             {
                 emit(0x48); emit(0xB8);
@@ -221,15 +225,17 @@ private struct X64Codegen
     private void emitBinary(Instr instruction)
     {
         if (instruction.uses.length != 2)
-            throw new Exception("x86-64 binary operation requires two values");
+            throw new InvalidIRException("x86-64 binary operation requires two values");
         if (instruction.type.kind != TypeKind.i32 &&
             instruction.type.kind != TypeKind.i64)
-            throw new Exception("x86-64 arithmetic supports i32 and i64 values");
+            throw new UnsupportedOperationException(
+                    "x86-64 arithmetic supports i32 and i64 values");
         auto lhs = instruction.uses[0];
         auto rhs = instruction.uses[1];
         if (typeOf(lhs).kind != instruction.type.kind ||
             typeOf(rhs).kind != instruction.type.kind)
-            throw new Exception("x86-64 arithmetic operands must match the result type");
+            throw new InvalidIRException(
+                    "x86-64 arithmetic operands must match the result type");
         loadRax(lhs);
         loadRcx(rhs);
         if (wide(instruction.type))
@@ -248,7 +254,8 @@ private struct X64Codegen
              Op.uitofp, Op.fptosi, Op.fptoui, Op.bitcast, Op.alloca,
              Op.load, Op.store, Op.gep, Op.br, Op.condbr, Op.ret,
              Op.unreachable, Op.call, Op.phi:
-            throw new Exception("unsupported x86-64 binary operation");
+            throw new UnsupportedOperationException(
+                    "unsupported x86-64 binary operation");
         }
         storeRax(instruction.dst);
     }
@@ -273,13 +280,14 @@ private struct X64Codegen
     private void emitCompare(Instr instruction)
     {
         if (instruction.uses.length != 2)
-            throw new Exception("x86-64 comparison requires two values");
+            throw new InvalidIRException("x86-64 comparison requires two values");
         auto lhs = instruction.uses[0];
         auto rhs = instruction.uses[1];
         if ((typeOf(lhs).kind != TypeKind.i32 &&
              typeOf(lhs).kind != TypeKind.i64) ||
             typeOf(lhs).kind != typeOf(rhs).kind)
-            throw new Exception("x86-64 comparisons require matching i32 or i64 values");
+            throw new InvalidIRException(
+                    "x86-64 comparisons require matching i32 or i64 values");
         loadRax(lhs);
         loadRcx(rhs);
         if (wide(typeOf(lhs)))
@@ -293,9 +301,11 @@ private struct X64Codegen
     private void emitCall(Instr instruction)
     {
         if (!instruction.symbol.length)
-            throw new Exception("x86-64 Windows backend requires a direct call symbol");
+            throw new UnsupportedOperationException(
+                    "x86-64 Windows backend requires a direct call symbol");
         if (instruction.uses.length > 4)
-            throw new Exception("x86-64 Windows backend supports at most four call arguments");
+            throw new UnsupportedOperationException(
+                    "x86-64 Windows backend supports at most four call arguments");
         immutable ubyte[4] argumentRegisters = [RCX, RDX, R8, R9];
         foreach (index, argument; instruction.uses)
             loadArgumentRegister(argument, argumentRegisters[index]);
@@ -326,7 +336,8 @@ private struct X64Codegen
             break;
         case Op.condbr:
             if (instruction.uses.length != 1)
-                throw new Exception("x86-64 conditional branch requires one condition");
+                throw new InvalidIRException(
+                        "x86-64 conditional branch requires one condition");
             loadRax(instruction.uses[0]);
             emit(0x85); emit(0xC0);
             emit(0x0F); emit(0x85);
@@ -337,7 +348,8 @@ private struct X64Codegen
             break;
         case Op.ret:
             if (instruction.uses.length > 1)
-                throw new Exception("x86-64 return accepts at most one value");
+                throw new InvalidIRException(
+                        "x86-64 return accepts at most one value");
             if (instruction.uses.length)
                 loadRax(instruction.uses[0]);
             emit(0x48); emit(0x89); emit(0xEC);
@@ -354,16 +366,19 @@ private struct X64Codegen
              Op.sext, Op.zext, Op.trunc, Op.sitofp, Op.uitofp,
              Op.fptosi, Op.fptoui, Op.bitcast, Op.alloca, Op.load,
              Op.store, Op.gep, Op.phi:
-            throw new Exception("unsupported operation in x86-64 Windows backend");
+            throw new UnsupportedOperationException(
+                    "unsupported operation in x86-64 Windows backend");
         }
     }
 
     MachFunc compile()
     {
         if (!func.blocks.length)
-            throw new Exception("cannot generate x86-64 code for a function without blocks");
+            throw new InvalidIRException(
+                    "cannot generate x86-64 code for a function without blocks");
         if (func.params.length > 4)
-            throw new Exception("x86-64 Windows backend supports at most four parameters");
+            throw new UnsupportedOperationException(
+                    "x86-64 Windows backend supports at most four parameters");
 
         emit(0x55);
         emit(0x48); emit(0x89); emit(0xE5);
@@ -378,7 +393,8 @@ private struct X64Codegen
         foreach (blockIndex, block; func.blocks)
         {
             if (block.id != blockIndex)
-                throw new Exception("basic block ids must match their function indices");
+                throw new InvalidIRException(
+                        "basic block ids must match their function indices");
             blockOffsets[blockIndex] = cast(uint) machineFunc.code.length;
             machineFunc.blocks ~= MachBlock(block.name);
             foreach (instruction; block.instrs)
@@ -403,7 +419,8 @@ final class Win64ABI : ABI
             if ((type.kind != TypeKind.i32 && type.kind != TypeKind.i64 &&
                  type.kind != TypeKind.bool_) &&
                 type.kind != TypeKind.ptr && type.kind != TypeKind.func)
-                throw new Exception("Win64 ABI classification supports i32, i64, bool, and pointers");
+                throw new UnsupportedOperationException(
+                        "Win64 ABI classification supports i32, i64, bool, and pointers");
             if (index < registers.length)
                 result ~= Allocation(Allocation.Kind.reg, registers[index],
                         0, type, 0);
@@ -421,7 +438,8 @@ final class Win64ABI : ABI
              ret.kind != TypeKind.bool_) &&
             ret.kind != TypeKind.ptr && ret.kind != TypeKind.func &&
             !ret.isVoid)
-            throw new Exception("Win64 ABI returns only i32, i64, bool, pointers, or void");
+            throw new UnsupportedOperationException(
+                    "Win64 ABI returns only i32, i64, bool, pointers, or void");
         return Allocation(Allocation.Kind.reg, RAX, 0, ret, 0);
     }
 }
@@ -436,7 +454,8 @@ final class X86_64Target : Target
     ABI abi(CallingConv cc)
     {
         if (cc != CallingConv.win64)
-            throw new Exception("x86-64 Windows target only supports win64 calling convention");
+            throw new UnsupportedOperationException(
+                    "x86-64 Windows target only supports win64 calling convention");
         return new Win64ABI();
     }
 
@@ -534,4 +553,20 @@ unittest
     assert(machineFunc.relocs[1].symbol == "printf");
     assert(machineFunc.relocs[0].type == AMD64Rel32);
     assert(machineFunc.relocs[1].type == AMD64Rel32);
+}
+
+unittest
+{
+    import std.exception : assertThrown;
+
+    auto func = Func();
+    func.name = "unsupported";
+    func.newBlock("entry");
+    auto pointer = func.newValue(Type.ptr());
+    auto value = func.newValue(Type.i32());
+    func.blocks[0].instrs ~= Instr(op: Op.load, dst: value,
+            type: Type.i32(), uses: [pointer]);
+    func.blocks[0].instrs ~= Instr(op: Op.ret, uses: [value]);
+    assertThrown!UnsupportedOperationException(
+            (new X86_64Target()).selectAndAlloc(func));
 }

@@ -2,6 +2,7 @@ module smedja.arch.x86;
 
 import smedja.ir;
 import smedja.arch;
+import smedja.errors : CodeGenerationException, UnsupportedOperationException;
 import std.algorithm.searching : canFind;
 
 enum : RegId { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, ST0 }
@@ -150,7 +151,7 @@ private struct X86Codegen
     private int offset(Value value)
     {
         if (value.isNone || value.id >= valueOffsets.length)
-            throw new Exception("invalid value used by x86 code generation");
+            throw new CodeGenerationException("invalid value used by x86 code generation");
         return valueOffsets[value.id];
     }
 
@@ -242,13 +243,14 @@ private struct X86Codegen
     private void requireUses(Instr instruction, size_t count)
     {
         if (instruction.uses.length < count)
-            throw new Exception("instruction has too few operands for x86 code generation");
+            throw new CodeGenerationException(
+                    "instruction has too few operands for x86 code generation");
     }
 
     private uint valueSize(Value value)
     {
         if (value.isNone || value.id >= func.values.length)
-            throw new Exception("invalid value used by x86 code generation");
+            throw new CodeGenerationException("invalid value used by x86 code generation");
         return typeWidth(func.values[value.id].type);
     }
 
@@ -310,7 +312,7 @@ private struct X86Codegen
     private void branchTo(uint target, ubyte opcode)
     {
         if (target >= blockOffsets.length)
-            throw new Exception("branch target is outside the function");
+            throw new CodeGenerationException("branch target is outside the function");
         if (opcode == 0xE9)
             emit(opcode);
         else
@@ -328,7 +330,7 @@ private struct X86Codegen
         if (instruction.symbol.length)
         {
             if (func.values[destination.id].type.kind != TypeKind.ptr)
-                throw new Exception("symbol constant requires a pointer result");
+                throw new CodeGenerationException("symbol constant requires a pointer result");
             emit(0xB8);
             auto relocationOffset = cast(uint) machineFunc.code.length;
             emit32(0);
@@ -413,7 +415,8 @@ private struct X86Codegen
             if (instruction.op != Op.add && instruction.op != Op.sub &&
                 instruction.op != Op.and_ && instruction.op != Op.or_ &&
                 instruction.op != Op.xor_)
-                throw new Exception("unsupported 64-bit integer operation");
+                throw new UnsupportedOperationException(
+                        "unsupported 64-bit integer operation");
         }
 
         loadEax(lhs);
@@ -455,7 +458,7 @@ private struct X86Codegen
              Op.sext, Op.zext, Op.trunc, Op.sitofp, Op.uitofp, Op.fptosi,
              Op.fptoui, Op.bitcast, Op.alloca, Op.load, Op.store, Op.gep,
              Op.br, Op.condbr, Op.ret, Op.unreachable, Op.call, Op.phi:
-            throw new Exception("invalid integer arithmetic operation");
+            throw new CodeGenerationException("invalid integer arithmetic operation");
         }
         if (size < 4)
             normalizeEax(instruction.type);
@@ -477,7 +480,7 @@ private struct X86Codegen
                  Op.sitofp, Op.uitofp, Op.fptosi, Op.fptoui, Op.bitcast,
                  Op.alloca, Op.load, Op.store, Op.gep, Op.br, Op.condbr,
                  Op.ret, Op.unreachable, Op.call, Op.phi:
-                throw new Exception("invalid 64-bit integer operation");
+                throw new CodeGenerationException("invalid 64-bit integer operation");
             }
             storeEax(instruction.dst, 1);
         }
@@ -498,7 +501,7 @@ private struct X86Codegen
              Op.fcmp, Op.sext, Op.zext, Op.trunc, Op.sitofp, Op.uitofp,
              Op.fptosi, Op.fptoui, Op.bitcast, Op.alloca, Op.load, Op.store,
              Op.gep, Op.br, Op.condbr, Op.ret, Op.unreachable, Op.call, Op.phi:
-            throw new Exception("invalid 64-bit runtime operation");
+            throw new CodeGenerationException("invalid 64-bit runtime operation");
         }
 
         foreach (value; [instruction.uses[1], instruction.uses[0]])
@@ -737,7 +740,8 @@ private struct X86Codegen
              Op.uitofp, Op.fptosi, Op.fptoui, Op.bitcast, Op.alloca, Op.load,
              Op.store, Op.gep, Op.br, Op.condbr, Op.ret, Op.unreachable,
              Op.call, Op.phi:
-            throw new Exception("invalid floating-point arithmetic operation");
+            throw new CodeGenerationException(
+                    "invalid floating-point arithmetic operation");
         }
         emit(cast(ubyte)(0x85 | (group << 3)));
         emitDisp(rhs);
@@ -785,7 +789,8 @@ private struct X86Codegen
         }
         else
         {
-            throw new Exception("unsigned x86 conversion requires a 32-bit or 64-bit integer");
+            throw new UnsupportedOperationException(
+                    "unsigned x86 conversion requires a 32-bit or 64-bit integer");
         }
         emit(0xD8); emit(0xC0);
         emit(0xDB); emit(0x85); emitDisp(bitScratch);
@@ -823,7 +828,8 @@ private struct X86Codegen
             return;
         }
         if (targetWidth != 8)
-            throw new Exception("unsigned x86 conversion requires a 32-bit or 64-bit result");
+            throw new UnsupportedOperationException(
+                    "unsigned x86 conversion requires a 32-bit or 64-bit result");
 
         storeEaxAt(constant);
         emit(0x31); emit(0xC0);
@@ -859,7 +865,8 @@ private struct X86Codegen
         if (instruction.op == Op.bitcast)
         {
             if (sourceWidth != targetWidth)
-                throw new Exception("bitcast requires source and destination types of equal size");
+                throw new CodeGenerationException(
+                        "bitcast requires source and destination types of equal size");
             copyValue(source, instruction.dst, targetWidth);
             return;
         }
@@ -924,7 +931,8 @@ private struct X86Codegen
                 return;
             }
             if (targetWidth > 4)
-                throw new Exception("x86 floating-point conversion requires a 32-bit or 64-bit integer result");
+                throw new UnsupportedOperationException(
+                        "x86 floating-point conversion requires a 32-bit or 64-bit integer result");
             emit(sourceWidth == 8 ? 0xF2 : 0xF3);
             emit(0x0F); emit(0x2C); emit(0x85);
             emitDisp(offset(source));
@@ -1182,14 +1190,15 @@ private struct X86Codegen
             break;
         case Op.ret:
             if (func.retType.kind == TypeKind.struct_ && !instruction.uses.length)
-                throw new Exception("struct return requires a result value");
+                throw new CodeGenerationException("struct return requires a result value");
             if (instruction.uses.length)
             {
                 auto returnValue = instruction.uses[0];
                 auto returnType = func.values[returnValue.id].type;
                 if (func.retType.kind == TypeKind.struct_ &&
                     typeWidth(returnType) != typeWidth(func.retType))
-                    throw new Exception("struct return value has the wrong size");
+                    throw new CodeGenerationException(
+                            "struct return value has the wrong size");
                 if (returnType.isFloat)
                 {
                     emit(returnType.width == 8 ? 0xDD : 0xD9);
@@ -1198,7 +1207,8 @@ private struct X86Codegen
                 else if (returnType.kind == TypeKind.struct_)
                 {
                     if (!hiddenReturnPointer)
-                        throw new Exception("struct return requires a hidden result pointer");
+                        throw new CodeGenerationException(
+                                "struct return requires a hidden result pointer");
                     auto size = valueSize(returnValue);
                     emit(0x8B); emit(0x85); emitDisp(hiddenReturnPointer);
                     uint copied;
@@ -1258,7 +1268,7 @@ private struct X86Codegen
     private void emitPhiCopies(uint from, uint to)
     {
         if (to >= func.blocks.length)
-            throw new Exception("branch target is outside the function");
+            throw new CodeGenerationException("branch target is outside the function");
 
         Value[] sources;
         Value[] destinations;
@@ -1278,7 +1288,8 @@ private struct X86Codegen
                 }
             }
             if (!found)
-                throw new Exception("phi node has no incoming value for predecessor");
+                throw new CodeGenerationException(
+                        "phi node has no incoming value for predecessor");
         }
         if (!sources.length)
             return;
@@ -1288,7 +1299,8 @@ private struct X86Codegen
         {
             auto size = valueSize(source);
             if (size != valueSize(destinations[index]))
-                throw new Exception("phi incoming value does not match its result size");
+                throw new CodeGenerationException(
+                        "phi incoming value does not match its result size");
             foreach (part; 0 .. (size + 3) / 4)
             {
                 loadEax(source, cast(uint) part);
@@ -1326,13 +1338,15 @@ private struct X86Codegen
     MachFunc compile()
     {
         if (!func.blocks.length)
-            throw new Exception("cannot generate x86 code for a function without blocks");
+            throw new CodeGenerationException(
+                    "cannot generate x86 code for a function without blocks");
 
         emitPrologue();
         foreach (blockIndex, block; func.blocks)
         {
             if (block.id != blockIndex)
-                throw new Exception("basic block ids must match their function indices");
+                throw new CodeGenerationException(
+                        "basic block ids must match their function indices");
             blockOffsets[blockIndex] = cast(uint) machineFunc.code.length;
             machineFunc.blocks ~= MachBlock(block.name);
             foreach (instructionIndex, instruction; block.instrs)
@@ -1389,7 +1403,8 @@ final class X86Target : Target {
 
     ABI abi(CallingConv cc) {
         if (cc != CallingConv.cdecl)
-            throw new Exception("x86-windows target only supports the cdecl calling convention");
+            throw new UnsupportedOperationException(
+                    "x86-windows target only supports the cdecl calling convention");
         return new CdeclABI();
     }
 

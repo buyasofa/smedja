@@ -3,6 +3,7 @@ module smedja.emit.coff;
 import smedja.ir;
 import smedja.arch;
 import smedja.emit;
+import smedja.errors : ObjectFormatException;
 import std.array : Appender, appender;
 import std.algorithm.searching : canFind;
 
@@ -148,9 +149,11 @@ final class CoffEmitter : Emitter
     void emit(ref Module mod, Target target, ref Appender!(ubyte[]) out_)
     {
         if (target.name == "x86-windows" && machine_ != MACHINE_I386)
-            throw new Exception("x86 machine code requires an i386 COFF header");
+            throw new ObjectFormatException(
+                    "x86 machine code requires an i386 COFF header");
         if (target.name == "x86_64-windows" && machine_ != MACHINE_AMD64)
-            throw new Exception("x86-64 machine code requires an AMD64 COFF header");
+            throw new ObjectFormatException(
+                    "x86-64 machine code requires an AMD64 COFF header");
 
         auto text = appender!(ubyte[])();
         auto data = appender!(ubyte[])();
@@ -168,7 +171,8 @@ final class CoffEmitter : Emitter
         foreach (func; mod.funcs)
         {
             if (!func.name.length || func.name in declaredSymbols)
-                throw new Exception("COFF function symbol name is empty or duplicated");
+                throw new ObjectFormatException(
+                        "COFF function symbol name is empty or duplicated");
             symbolIndices[func.name] = nextSymbol++;
             definedSymbols[func.name] = true;
             declaredSymbols[func.name] = true;
@@ -176,7 +180,8 @@ final class CoffEmitter : Emitter
         foreach (global; mod.globals)
         {
             if (!global.name.length || global.name in declaredSymbols)
-                throw new Exception("COFF global symbol name is empty or duplicated");
+                throw new ObjectFormatException(
+                        "COFF global symbol name is empty or duplicated");
             symbolIndices[global.name] = nextSymbol++;
             definedSymbols[global.name] = true;
             declaredSymbols[global.name] = true;
@@ -184,7 +189,7 @@ final class CoffEmitter : Emitter
         foreach (external; mod.externs)
         {
             if (!external.name.length)
-                throw new Exception("COFF external symbol name is empty");
+                throw new ObjectFormatException("COFF external symbol name is empty");
             if (external.name !in declaredSymbols)
             {
                 symbolIndices[external.name] = nextSymbol++;
@@ -224,9 +229,10 @@ final class CoffEmitter : Emitter
                 }
 
         if (relocs.data.length > ushort.max)
-            throw new Exception("COFF section relocation count exceeds the format limit");
+            throw new ObjectFormatException(
+                    "COFF section relocation count exceeds the format limit");
         if (strTab.length > uint.max - 4)
-            throw new Exception("COFF string table exceeds the format limit");
+            throw new ObjectFormatException("COFF string table exceeds the format limit");
 
         uint symTabOff = cast(uint)(
             CoffHeader.sizeof +
@@ -300,7 +306,8 @@ final class CoffEmitter : Emitter
         foreach (relocation; mf.relocs)
         {
             if (relocation.symbol !in symbolIndices)
-                throw new Exception("COFF relocation references an unknown symbol");
+                throw new ObjectFormatException(
+                        "COFF relocation references an unknown symbol");
             relocs.put(CoffReloc(
                     functionOffset + relocation.offset,
                     symbolIndices[relocation.symbol],
@@ -323,7 +330,8 @@ final class CoffEmitter : Emitter
 
         auto size = coffTypeWidth(g.type, x86_64);
         if (g.init.length > size)
-            throw new Exception("global initializer exceeds its COFF type size");
+            throw new ObjectFormatException(
+                    "global initializer exceeds its COFF type size");
         if (g.init.length)
             write(data, g.init);
         foreach (_; g.init.length .. size)
@@ -449,4 +457,14 @@ unittest
     assert(output.data[0] == 0x64);
     assert(output.data[1] == 0x86);
     assert(output.data[2] == 2);
+}
+
+unittest
+{
+    import std.exception : assertThrown;
+
+    auto mod = Module();
+    auto output = appender!(ubyte[])();
+    assertThrown!ObjectFormatException(
+            (new CoffEmitter()).emit(mod, new X86_64Target(), output));
 }
