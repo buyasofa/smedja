@@ -2,6 +2,8 @@
 
 a small compiler backend written in D. still a work in progress.
 
+i use this as the backend for my WIP language called heart.
+
 ## goals
 
 - generate code for a few targets
