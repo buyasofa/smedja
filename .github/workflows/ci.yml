@@ -4,13 +4,54 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dlang-community/setup-dlang@v2
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+          install: mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-llvm
+
       - run: dub test
+      - run: dub build
+
+      - name: Generate and run Windows programs
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -e
+          set -o pipefail
+          mkdir -p tests/bin
+          for program in fib arithmetic branches win64; do
+            dmd -i -Isource -Itests -of="tests/bin/$program-generator.exe" "tests/$program.d"
+            ./tests/bin/$program-generator.exe
+          done
+
+          set +e
+          fib_output=$(./tests/bin/fib.exe | tr -d '\r')
+          fib_status=$?
+          set -e
+          test "$fib_output" = "fib(10) = 55"
+          test "$fib_status" -eq 55
+
+          for program in arithmetic branches win64; do
+            set +e
+            "./tests/bin/$program.exe"
+            status=$?
+            set -e
+            test "$status" -eq 42
+          done
