@@ -3,6 +3,7 @@ module smedja.emit;
 public import smedja.emit.elf;
 public import smedja.emit.coff;
 public import smedja.emit.c;
+public import smedja.emit.dump;
 
 public import smedja.emit.pdb;
 public import smedja.emit.dwarf;
