@@ -149,6 +149,8 @@ final class CoffEmitter : Emitter
     {
         if (target.name == "x86-windows" && machine_ != MACHINE_I386)
             throw new Exception("x86 machine code requires an i386 COFF header");
+        if (target.name == "x86_64-windows" && machine_ != MACHINE_AMD64)
+            throw new Exception("x86-64 machine code requires an AMD64 COFF header");
 
         auto text = appender!(ubyte[])();
         auto data = appender!(ubyte[])();
@@ -428,4 +430,23 @@ unittest
     assert(output.data[52] == 1);
     assert(output.data[12] == 2);
     assert(output.data[13] == 0);
+}
+
+unittest
+{
+    auto mod = Module();
+    mod.newFunc("answer", Type.i32());
+    auto value = mod.funcs[0].newValue(Type.i32());
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.const_, dst: value,
+            type: Type.i32(), imm: Const.int_(42));
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.ret, uses: [value]);
+
+    auto output = appender!(ubyte[])();
+    auto target = new X86_64Target();
+    auto emitter = new CoffEmitter(true);
+    emitter.emit(mod, target, output);
+
+    assert(output.data[0] == 0x64);
+    assert(output.data[1] == 0x86);
+    assert(output.data[2] == 2);
 }

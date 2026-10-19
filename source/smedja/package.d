@@ -9,7 +9,7 @@ public import smedja.arch;
 public import smedja.emit;
 
 enum Arch : ubyte {
-    x86_64, // not supported yet
+    x86_64,
     x86,
     arm64 // not supported yet
 }
@@ -34,7 +34,7 @@ class TargetArchNotDone : Exception
 
 Target targetFor(Arch arch) {
     final switch (arch) {
-        case Arch.x86_64: throw new TargetArchNotDone("x86_64 target not implemented yet");
+        case Arch.x86_64: return new X86_64Target();
         case Arch.x86:    return new X86Target();
         case Arch.arm64:  throw new TargetArchNotDone("arm64 target not implemented yet");
     }
