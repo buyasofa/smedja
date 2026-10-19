@@ -2,6 +2,7 @@ module smedja.ir;
 
 import std.format : format;
 
+/// the kinds of values supported by the ir.
 enum TypeKind : ubyte
 {
     void_,
@@ -17,6 +18,7 @@ enum TypeKind : ubyte
     func,
 }
 
+/// describes a value type in the ir.
 struct Type
 {
     TypeKind kind;
@@ -25,56 +27,67 @@ struct Type
     Type* ret;
     string name;
 
+    /// returns the void type.
     static Type void_()
     {
         return Type(TypeKind.void_);
     }
 
+    /// returns the boolean type.
     static Type bool_()
     {
         return Type(TypeKind.bool_);
     }
 
+    /// returns an 8-bit integer type.
     static Type i8()
     {
         return Type(TypeKind.i8);
     }
 
+    /// returns a 16-bit integer type.
     static Type i16()
     {
         return Type(TypeKind.i16);
     }
 
+    /// returns a 32-bit integer type.
     static Type i32()
     {
         return Type(TypeKind.i32);
     }
 
+    /// returns a 64-bit integer type.
     static Type i64()
     {
         return Type(TypeKind.i64);
     }
 
+    /// returns a 32-bit floating-point type.
     static Type f32()
     {
         return Type(TypeKind.f32);
     }
 
+    /// returns a 64-bit floating-point type.
     static Type f64()
     {
         return Type(TypeKind.f64);
     }
 
+    /// returns a pointer type.
     static Type ptr()
     {
         return Type(TypeKind.ptr);
     }
 
+    /// returns a named struct type with the given fields.
     static Type struct_(string name, Type[] fields)
     {
         return Type(TypeKind.struct_, fields, [], null, name);
     }
 
+    /// returns a function type with the given result and parameters.
     static Type func_(Type ret, Type[] params)
     {
         auto t = Type(TypeKind.func);
@@ -83,26 +96,31 @@ struct Type
         return t;
     }
 
+    /// returns whether this is an integer type.
     bool isInt() const
     {
         return kind >= TypeKind.i8 && kind <= TypeKind.i64;
     }
 
+    /// returns whether this is a floating-point type.
     bool isFloat() const
     {
         return kind == TypeKind.f32 || kind == TypeKind.f64;
     }
 
+    /// returns whether this is a pointer type.
     bool isPtr() const
     {
         return kind == TypeKind.ptr;
     }
 
+    /// returns whether this is the void type.
     bool isVoid() const
     {
         return kind == TypeKind.void_;
     }
 
+    /// returns this type's width in bytes.
     uint width() const
     {
         final switch (kind)
@@ -138,6 +156,7 @@ struct Type
     }
 }
 
+/// identifies a value inside a function.
 struct Value
 {
     uint id;
@@ -154,6 +173,7 @@ struct ValueDef
     string name;
 }
 
+/// stores an integer, floating-point, undefined, or null constant.
 struct Const
 {
     enum Kind : ubyte
@@ -171,6 +191,7 @@ struct Const
         double f;
     }
 
+    /// creates an integer constant.
     static Const int_(long v)
     {
         Const c;
@@ -179,6 +200,7 @@ struct Const
         return c;
     }
 
+    /// creates a floating-point constant.
     static Const fp(double v)
     {
         Const c;
@@ -187,17 +209,20 @@ struct Const
         return c;
     }
 
+    /// creates an undefined constant.
     static Const undef()
     {
         return Const(Kind.undef);
     }
 
+    /// creates a null constant.
     static Const null_()
     {
         return Const(Kind.null_);
     }
 }
 
+/// lists the operations that an ir instruction can perform.
 enum Op : ubyte
 {
     const_,
@@ -240,6 +265,7 @@ enum Op : ubyte
     phi,
 }
 
+/// lists the comparison predicates used by the ir.
 enum Pred : ubyte
 {
     eq,
@@ -258,12 +284,14 @@ enum Pred : ubyte
     ge,
 }
 
+/// links a phi input value to its predecessor block.
 struct PhiEdge
 {
     Value val;
     uint blockId;
 }
 
+/// represents one ir instruction.
 struct Instr
 {
     Op op;
@@ -278,6 +306,7 @@ struct Instr
     string symbol;
 }
 
+/// holds the instructions and control flow for a basic block.
 struct Block
 {
     uint id;
@@ -287,6 +316,7 @@ struct Block
     uint[] succs;
 }
 
+/// describes a function parameter.
 struct Param
 {
     Type type;
@@ -294,6 +324,7 @@ struct Param
     Value value;
 }
 
+/// holds a function's signature, values, and blocks.
 struct Func
 {
     string name;
@@ -302,6 +333,7 @@ struct Func
     Block[] blocks;
     ValueDef[] values;
 
+    /// creates a named value with the given type.
     Value newValue(Type t, string name = "")
     {
         auto v = Value(cast(uint) values.length);
@@ -309,6 +341,7 @@ struct Func
         return v;
     }
 
+    /// creates and returns a new block.
     ref Block newBlock(string name = "")
     {
         auto id = cast(uint) blocks.length;
@@ -316,17 +349,20 @@ struct Func
         return blocks[$ - 1];
     }
 
+    /// returns the function's first block.
     ref Block entry() return
     {
         return blocks[0];
     }
 
+    /// returns the type of a value in this function.
     Type typeOf(Value v)
     {
         return values[v.id].type;
     }
 }
 
+/// describes how a global is visible to other code.
 enum Linkage : ubyte
 {
     internal,
@@ -334,6 +370,7 @@ enum Linkage : ubyte
     weak
 }
 
+/// describes a global value and its initial bytes.
 struct Global
 {
     string name;
@@ -342,6 +379,7 @@ struct Global
     ubyte[] init;
 }
 
+/// holds functions, external declarations, and globals for a program.
 struct Module
 {
     string name;
@@ -349,6 +387,7 @@ struct Module
     Func[] externs;
     Global[] globals;
 
+    /// creates a function with an entry block and optional parameters.
     ref Func newFunc(string name, Type ret, Param[] params = [])
     {
         Func f;
@@ -362,6 +401,7 @@ struct Module
         return funcs[$ - 1];
     }
 
+    /// declares an external function.
     ref Func newExtern(string name, Type ret, Type[] paramTypes = [])
     {
         Func f;

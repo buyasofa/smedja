@@ -3,11 +3,13 @@ module smedja.builder;
 import smedja.errors : InvalidIRException, UnsupportedOperationException;
 import smedja.ir;
 
+/// builds ir instructions for one function. use the free functions below with ufcs.
 struct IRBuilder
 {
     private Func* func;
     private uint blockIndex;
 
+    /// starts building instructions in the function's entry block.
     this(ref Func func)
     {
         if (!func.blocks.length)
@@ -385,145 +387,173 @@ struct IRBuilder
     }
 }
 
+/// returns the current insertion block.
 @property uint currentBlock(ref IRBuilder builder)
 {
     return builder.currentBlock;
 }
 
+/// creates a basic block and returns its index.
 uint newBlock(ref IRBuilder builder, string name = "")
 {
     return builder.newBlock(name);
 }
 
+/// selects the block that receives new instructions.
 void positionAt(ref IRBuilder builder, uint index)
 {
     builder.positionAt(index);
 }
 
+/// returns the value for a function parameter.
 Value param(ref IRBuilder builder, size_t index)
 {
     return builder.param(index);
 }
 
+/// creates a value with the given type and optional name.
 Value newValue(ref IRBuilder builder, Type type, string name = "")
 {
     return builder.newValue(type, name);
 }
 
+/// creates a constant value.
 Value constant(ref IRBuilder builder, Type type, Const value)
 {
     return builder.constant(type, value);
 }
 
+/// creates a floating-point constant value.
 Value floatConstant(ref IRBuilder builder, Type type, double value)
 {
     return builder.floatConstant(type, value);
 }
 
+/// creates an integer constant value.
 Value intConstant(ref IRBuilder builder, Type type, long value)
 {
     return builder.intConstant(type, value);
 }
 
+/// creates a value that points to a named symbol.
 Value symbol(ref IRBuilder builder, string name)
 {
     return builder.symbol(name);
 }
 
+/// emits a binary operation with an explicit type.
 Value binary(ref IRBuilder builder, Op op, Type type, Value lhs, Value rhs)
 {
     return builder.binary(op, type, lhs, rhs);
 }
 
+/// writes a binary operation into an existing value.
 void binaryInto(ref IRBuilder builder, Value destination, Op op,
         Value lhs, Value rhs)
 {
     builder.binaryInto(destination, op, lhs, rhs);
 }
 
+/// adds two integer values.
 Value add(ref IRBuilder builder, Value lhs, Value rhs)
 {
     return builder.add(lhs, rhs);
 }
 
+/// subtracts the right value from the left value.
 Value sub(ref IRBuilder builder, Value lhs, Value rhs)
 {
     return builder.sub(lhs, rhs);
 }
 
+/// multiplies two integer values.
 Value mul(ref IRBuilder builder, Value lhs, Value rhs)
 {
     return builder.mul(lhs, rhs);
 }
 
+/// compares two integer values.
 Value compare(ref IRBuilder builder, Pred pred, Value lhs, Value rhs)
 {
     return builder.compare(pred, lhs, rhs);
 }
 
+/// compares two floating-point values.
 Value compareFloat(ref IRBuilder builder, Pred pred, Value lhs, Value rhs)
 {
     return builder.compareFloat(pred, lhs, rhs);
 }
 
+/// converts a value to another type.
 Value convert(ref IRBuilder builder, Op op, Type type, Value source)
 {
     return builder.convert(op, type, source);
 }
 
+/// reserves stack space for a value of the given type.
 Value alloca(ref IRBuilder builder, Type type)
 {
     return builder.alloca(type);
 }
 
+/// loads a value from a pointer.
 Value load(ref IRBuilder builder, Type type, Value pointer)
 {
     return builder.load(type, pointer);
 }
 
+/// stores a value through a pointer.
 void store(ref IRBuilder builder, Value pointer, Value value)
 {
     builder.store(pointer, value);
 }
 
+/// calculates an address using an optional index and byte offset.
 Value gep(ref IRBuilder builder, Value pointer, Type elementType,
         Value index = Value.none, long byteOffset = 0)
 {
     return builder.gep(pointer, elementType, index, byteOffset);
 }
 
+/// creates a value from inputs on predecessor blocks.
 Value phi(ref IRBuilder builder, Type type, PhiEdge[] incoming)
 {
     return builder.phi(type, incoming);
 }
 
+/// writes phi inputs into an existing value.
 void phi(ref IRBuilder builder, Value destination, PhiEdge[] incoming)
 {
     builder.phi(destination, incoming);
 }
 
+/// branches to a block.
 void branch(ref IRBuilder builder, uint target)
 {
     builder.branch(target);
 }
 
+/// branches to one of two blocks based on a boolean value.
 void condBranch(ref IRBuilder builder, Value condition, uint thenBlock,
         uint elseBlock)
 {
     builder.condBranch(condition, thenBlock, elseBlock);
 }
 
+/// calls a named function and returns its result.
 Value call(ref IRBuilder builder, string symbolName, Type returnType,
         Value[] args = [])
 {
     return builder.call(symbolName, returnType, args);
 }
 
+/// returns from the current function.
 void ret(ref IRBuilder builder, Value value = Value.none)
 {
     builder.ret(value);
 }
 
+/// appends an instruction directly.
 void emit(ref IRBuilder builder, Instr instruction)
 {
     builder.emit(instruction);
