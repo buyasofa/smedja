@@ -54,6 +54,7 @@ struct Allocation
     RegId reg;
     uint offset;
     Type type;
+    RegId secondReg;
 }
 
 interface ABI
@@ -94,6 +95,14 @@ struct MachFunc {
     string      name;
     MachBlock[] blocks;
     uint        frameSize;
+    ubyte[]     code;
+    MachReloc[] relocs;
+}
+
+struct MachReloc {
+    uint   offset;
+    string symbol;
+    ushort type;
 }
 
 interface Target {

@@ -275,6 +275,7 @@ struct Instr
     uint target;
     uint altTarget;
     PhiEdge[] phiEdges;
+    string symbol;
 }
 
 struct Block

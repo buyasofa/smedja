@@ -4,7 +4,7 @@ import smedja.ir;
 import smedja.arch;
 import smedja.emit;
 import std.array : Appender, appender;
-import std.string : representation;
+import std.algorithm.searching : canFind;
 
 enum : ushort
 {
@@ -90,29 +90,26 @@ align(1) struct CoffReloc
     ushort type_;
 }
 
-private void put(T)(ref Appender!(ubyte[]) buf, T val)
-{
-    buf.put((cast(ubyte*)&val)[0 .. T.sizeof]);
-}
-
 private void write(T)(ref Appender!(ubyte[]) buf, auto ref T val) {
     buf.put((cast(ubyte*) &val)[0 .. T.sizeof]);
 }
 
-private void putName(ref Appender!(ubyte[]) buf, string name, ref ubyte[] strTab)
+private void write(ref Appender!(ubyte[]) buf, ubyte[] val)
 {
-    CoffSymbol sym;
+    buf.put(val);
+}
+
+private void setSymbolName(ref CoffSymbol sym, string name, ref ubyte[] strTab)
+{
+    sym.shortName[] = 0;
     if (name.length <= 8)
-    {
         sym.shortName[0 .. name.length] = name[];
-    }
     else
     {
         sym.zeroes = 0;
-        sym.strOff = cast(uint) strTab.length;
+        sym.strOff = cast(uint)(strTab.length + 4);
         strTab ~= cast(ubyte[]) name ~ 0;
     }
-    write(buf, sym.shortName);
 }
 
 private char[8] sectionName(string s)
@@ -123,12 +120,26 @@ private char[8] sectionName(string s)
     return r;
 }
 
+private uint coffTypeWidth(Type type, bool x86_64)
+{
+    if (type.kind == TypeKind.ptr || type.kind == TypeKind.func)
+        return x86_64 ? 8 : 4;
+    if (type.kind == TypeKind.struct_)
+    {
+        uint size;
+        foreach (field; type.fields)
+            size += coffTypeWidth(field, x86_64);
+        return size;
+    }
+    return type.width;
+}
+
 final class CoffEmitter : Emitter
 {
     private ushort machine_;
     private ushort relocType32_;
 
-    this(bool x86_64 = true)
+    this(bool x86_64 = false)
     {
         machine_ = x86_64 ? MACHINE_AMD64 : MACHINE_I386;
         relocType32_ = x86_64 ? REL_AMD64_REL32 : REL_I386_REL32;
@@ -136,23 +147,84 @@ final class CoffEmitter : Emitter
 
     void emit(ref Module mod, Target target, ref Appender!(ubyte[]) out_)
     {
+        if (target.name == "x86-windows" && machine_ != MACHINE_I386)
+            throw new Exception("x86 machine code requires an i386 COFF header");
+
         auto text = appender!(ubyte[])();
         auto data = appender!(ubyte[])();
         auto relocs = appender!(CoffReloc[])();
         auto syms = appender!(CoffSymbol[])();
-        ubyte[] strTab = [0]; // starts with null byte
-
+        ubyte[] strTab;
+        MachFunc[] machineFuncs;
         foreach (ref f; mod.funcs)
+            machineFuncs ~= target.selectAndAlloc(f);
+
+        uint[string] symbolIndices;
+        bool[string] definedSymbols;
+        bool[string] declaredSymbols;
+        uint nextSymbol;
+        foreach (func; mod.funcs)
         {
-            MachFunc mf = target.selectAndAlloc(f);
-            encodeFunc(mf, text, relocs, syms, strTab, cast(uint) syms.data.length);
+            if (!func.name.length || func.name in declaredSymbols)
+                throw new Exception("COFF function symbol name is empty or duplicated");
+            symbolIndices[func.name] = nextSymbol++;
+            definedSymbols[func.name] = true;
+            declaredSymbols[func.name] = true;
         }
+        foreach (global; mod.globals)
+        {
+            if (!global.name.length || global.name in declaredSymbols)
+                throw new Exception("COFF global symbol name is empty or duplicated");
+            symbolIndices[global.name] = nextSymbol++;
+            definedSymbols[global.name] = true;
+            declaredSymbols[global.name] = true;
+        }
+        foreach (external; mod.externs)
+        {
+            if (!external.name.length)
+                throw new Exception("COFF external symbol name is empty");
+            if (external.name !in declaredSymbols)
+            {
+                symbolIndices[external.name] = nextSymbol++;
+                declaredSymbols[external.name] = true;
+            }
+        }
+        foreach (machineFunc; machineFuncs)
+            foreach (relocation; machineFunc.relocs)
+                if (relocation.symbol !in symbolIndices)
+                    symbolIndices[relocation.symbol] = nextSymbol++;
+
+        foreach (ref mf; machineFuncs)
+            encodeFunc(mf, text, relocs, syms, strTab, symbolIndices);
 
         foreach (ref g; mod.globals)
-            encodeGlobal(g, data, syms, strTab);
+            encodeGlobal(g, data, syms, strTab, machine_ == MACHINE_AMD64);
 
+        bool[string] writtenSymbols;
+        foreach (func; mod.funcs)
+            writtenSymbols[func.name] = true;
+        foreach (global; mod.globals)
+            writtenSymbols[global.name] = true;
         foreach (ref f; mod.externs)
-            addExtern(f.name, syms, strTab);
+        {
+            if (f.name !in writtenSymbols)
+            {
+                addExtern(f.name, syms, strTab);
+                writtenSymbols[f.name] = true;
+            }
+        }
+        foreach (machineFunc; machineFuncs)
+            foreach (relocation; machineFunc.relocs)
+                if (relocation.symbol !in writtenSymbols)
+                {
+                    addExtern(relocation.symbol, syms, strTab);
+                    writtenSymbols[relocation.symbol] = true;
+                }
+
+        if (relocs.data.length > ushort.max)
+            throw new Exception("COFF section relocation count exceeds the format limit");
+        if (strTab.length > uint.max - 4)
+            throw new Exception("COFF string table exceeds the format limit");
 
         uint symTabOff = cast(uint)(
             CoffHeader.sizeof +
@@ -179,7 +251,8 @@ final class CoffEmitter : Emitter
             name: sectionName(".text"),
             rawSize: cast(uint) text.data.length,
             rawOff: textOff,
-            relocOff: cast(uint)(textOff + text.data.length),
+            relocOff: relocs.data.length
+                ? cast(uint)(textOff + text.data.length) : 0,
             numRelocs: cast(ushort) relocs.data.length,
             flags: SCN_CODE | SCN_EXEC | SCN_READ | SCN_ALIGN16,
         };
@@ -210,73 +283,57 @@ final class CoffEmitter : Emitter
         ref Appender!(CoffReloc[]) relocs,
         ref Appender!(CoffSymbol[]) syms,
         ref ubyte[] strTab,
-        uint symIdx)
+        uint[string] symbolIndices)
     {
-        CoffSymbol sym;
-        if (mf.name.length <= 8)
-        {
-            sym.shortName[0 .. mf.name.length] = mf.name[];
-        }
-        else
-        {
-            sym.zeroes = 0;
-            sym.strOff = cast(uint) strTab.length;
-            strTab ~= cast(ubyte[]) mf.name ~ 0;
-        }
+        CoffSymbol sym = CoffSymbol.init;
+        setSymbolName(sym, mf.name, strTab);
         sym.value = cast(uint) text.data.length;
         sym.section = 1;
         sym.type_ = 0x20;
         sym.storageClass = SYM_EXTERNAL;
         syms.put(sym);
 
-        foreach (ref b; mf.blocks)
-            foreach (ref i; b.instrs)
-                text.put(cast(ubyte) 0x90);
+        auto functionOffset = cast(uint) text.data.length;
+        text.put(mf.code);
+        foreach (relocation; mf.relocs)
+        {
+            if (relocation.symbol !in symbolIndices)
+                throw new Exception("COFF relocation references an unknown symbol");
+            relocs.put(CoffReloc(
+                    functionOffset + relocation.offset,
+                    symbolIndices[relocation.symbol],
+                    relocation.type ? relocation.type : relocType32_));
+        }
     }
 
     private void encodeGlobal(ref Global g,
         ref Appender!(ubyte[]) data,
         ref Appender!(CoffSymbol[]) syms,
-        ref ubyte[] strTab)
+        ref ubyte[] strTab,
+        bool x86_64)
     {
-        CoffSymbol sym;
-        if (g.name.length <= 8)
-        {
-            sym.shortName[0 .. g.name.length] = g.name[];
-        }
-        else
-        {
-            sym.zeroes = 0;
-            sym.strOff = cast(uint) strTab.length;
-            strTab ~= cast(ubyte[]) g.name ~ 0;
-        }
+        CoffSymbol sym = CoffSymbol.init;
+        setSymbolName(sym, g.name, strTab);
         sym.value = cast(uint) data.data.length;
         sym.section = 2;
         sym.storageClass = g.linkage == Linkage.internal ? SYM_STATIC : SYM_EXTERNAL;
         syms.put(sym);
 
+        auto size = coffTypeWidth(g.type, x86_64);
+        if (g.init.length > size)
+            throw new Exception("global initializer exceeds its COFF type size");
         if (g.init.length)
             write(data, g.init);
-        else
-            foreach (_; 0 .. g.type.width)
-                write(data, cast(ubyte) 0);
+        foreach (_; g.init.length .. size)
+            write(data, cast(ubyte) 0);
     }
 
     private void addExtern(string name,
         ref Appender!(CoffSymbol[]) syms,
         ref ubyte[] strTab)
     {
-        CoffSymbol sym;
-        if (name.length <= 8)
-        {
-            sym.shortName[0 .. name.length] = name[];
-        }
-        else
-        {
-            sym.zeroes = 0;
-            sym.strOff = cast(uint) strTab.length;
-            strTab ~= cast(ubyte[]) name ~ 0;
-        }
+        CoffSymbol sym = CoffSymbol.init;
+        setSymbolName(sym, name, strTab);
         sym.value = 0;
         sym.section = 0;
         sym.storageClass = SYM_EXTERNAL;
@@ -291,22 +348,27 @@ unittest
     auto data = appender!(ubyte[])();
     auto relocs = appender!(CoffReloc[])();
     auto syms = appender!(CoffSymbol[])();
-    ubyte[] strTab = [0];
+    ubyte[] strTab;
 
     MachFunc mf;
     mf.name = "func";
-    emitter.encodeFunc(mf, text, relocs, syms, strTab, 0);
+    uint[string] symbolIndices;
+    symbolIndices["func"] = 0;
+    emitter.encodeFunc(mf, text, relocs, syms, strTab, symbolIndices);
 
     Global global;
     global.name = "global";
     global.type = Type.i32();
     global.linkage = Linkage.internal;
-    emitter.encodeGlobal(global, data, syms, strTab);
+    global.init = [1, 2];
+    emitter.encodeGlobal(global, data, syms, strTab, false);
 
     emitter.addExtern("external", syms, strTab);
+    emitter.addExtern("long_external_name", syms, strTab);
 
-    assert(syms.data.length == 3);
+    assert(syms.data.length == 4);
     assert(syms.data[0].shortName[0 .. 4] == "func");
+    assert(syms.data[0].shortName[4] == 0);
     assert(syms.data[0].section == 1);
     assert(syms.data[0].type_ == 0x20);
     assert(syms.data[0].storageClass == SYM_EXTERNAL);
@@ -316,5 +378,54 @@ unittest
     assert(syms.data[2].shortName[0 .. 8] == "external");
     assert(syms.data[2].section == 0);
     assert(syms.data[2].storageClass == SYM_EXTERNAL);
-    assert(data.data == [0, 0, 0, 0]);
+    assert(syms.data[3].zeroes == 0);
+    assert(syms.data[3].strOff == 4);
+    assert(strTab == cast(ubyte[])"long_external_name\0");
+    assert(data.data == [1, 2, 0, 0]);
+}
+
+unittest
+{
+    auto mod = Module();
+    mod.newFunc("answer", Type.i32());
+    auto value = mod.funcs[0].newValue(Type.i32());
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.const_, dst: value,
+            type: Type.i32(), imm: Const.int_(42));
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.ret, uses: [value]);
+
+    auto output = appender!(ubyte[])();
+    auto target = new X86Target();
+    auto emitter = new CoffEmitter();
+    emitter.emit(mod, target, output);
+
+    assert(output.data.length > CoffHeader.sizeof + 2 * SectionHeader.sizeof);
+    assert(output.data[0] == 0x4C);
+    assert(output.data[1] == 0x01);
+    assert(output.data[2] == 2);
+    assert(output.data[3] == 0);
+    assert(output.data[100] == 0x55);
+    assert(output.data.canFind(0xB8));
+    assert(output.data[52] == 0);
+}
+
+unittest
+{
+    auto mod = Module();
+    mod.newFunc("product", Type.i64(),
+            [Param(Type.i64(), "left"), Param(Type.i64(), "right")]);
+    auto result = mod.funcs[0].newValue(Type.i64());
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.mul, dst: result,
+            type: Type.i64(), uses: [Value(0), Value(1)]);
+    mod.funcs[0].entry.instrs ~= Instr(op: Op.ret, uses: [result]);
+
+    auto output = appender!(ubyte[])();
+    auto target = new X86Target();
+    auto emitter = new CoffEmitter();
+    emitter.emit(mod, target, output);
+
+    assert(output.data[0] == 0x4C);
+    assert(output.data[1] == 0x01);
+    assert(output.data[52] == 1);
+    assert(output.data[12] == 2);
+    assert(output.data[13] == 0);
 }
