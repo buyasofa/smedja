@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/smedja
+smedja.so
+smedja.dylib
+smedja.dll
+libsmedja.a
+smedja.a
+smedja.lib
+smedja-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst

@@ -1,0 +1,9 @@
+{
+	"description": "compiler backend written in D, like qbe or llvm but worse",
+	"license": "BSL-1.0",
+	"authors": [
+		"buyasofa"
+	],
+	"copyright": "Copyright © 2026, buyasofa",
+	"name": "smedja"
+}
